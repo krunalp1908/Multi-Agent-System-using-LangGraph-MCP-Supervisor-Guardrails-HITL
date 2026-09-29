@@ -1,87 +1,122 @@
-# Multi-Agent-System-using-LangGraph-MCP-Supervisor-Guardrails-HITL
+# TripMate AI
 
-A demo multi-agent system that uses LangGraph and MCP to implement a travel-planning assistant with a Supervisor, input Guardrails, and Human-In-The-Loop (HITL) approval flows. The project includes a FastAPI frontend, example MCP server, and client helpers to demonstrate how agents, supervisors, and guardrails can be composed into a safe, reviewable planning pipeline.
+A multi-agent travel planner built with LangGraph, MCP, FastAPI, and Groq. A supervisor selects the travel specialists needed for a request, an input guardrail blocks unrelated requests, and human review is required before a draft itinerary is finalized.
 
-Key ideas:
-- Multi-agent coordination using LangGraph and MCP
-- Supervisor agent to manage complex workflows
-- Input guardrails to validate user requests
-- Human-in-the-loop approval for generated plans
+## Features
 
-Contents
-- `app.py`: FastAPI web frontend and API endpoints
-- `backend.py`: core agent orchestration / travel-planner logic
-- `mcp_client.py`: client helpers to interact with the MCP server
-- `custom_weather_mcp_server.py`: example MCP server for weather checks
-- `templates/`, `static/`: frontend UI assets (HTML, JS, CSS)
+- Supervisor routes requests to flight, hotel, weather, budget, and itinerary agents.
+- Input guardrail checks that requests are travel-related.
+- Flight planning uses the local `airportsdata` dataset for airport identification. Airline service, schedules, and fares are not live-confirmed.
+- Hotel search uses Tavily MCP; current conditions and forecast data use the custom OpenWeather MCP server.
+- LangGraph checkpoints conversation state in PostgreSQL and pauses at a human-approval step.
+- Reviewers can approve a draft or request a revision with feedback.
+- FastAPI serves the web interface and JSON API.
 
-Features
-- Interactive web UI for sending travel planning prompts
-- Endpoint for drafting travel plans and separate approval endpoint
-- Example MCP server demonstrating domain adapters (weather, checkpoints)
+## Workflow
 
-Prerequisites
-- Python 3.10+ (recommended)
-- Git (to clone the repo)
-- A virtual environment tool (venv) or similar
+1. Submit a travel request in the web UI or through the API.
+2. The guardrail checks the request, then the supervisor selects agents and extracts trip constraints.
+3. Selected agents gather available travel context and the itinerary agent creates a draft.
+4. The workflow pauses for human review. Approve the draft or send revision feedback.
+5. The final agent generates the reviewed plan.
 
-Quick start (Windows)
+## Requirements
 
-1. Create and activate a virtual environment
+- Python 3.13 or newer
+- A PostgreSQL database reachable by the application
+- A Groq API key
+- A Tavily API key for live hotel search
+- An OpenWeather API key for weather requests
+
+The AviationStack MCP client is included for experimentation, but the flight agent does not call its airport or airline endpoints because those functions may be restricted by the account plan. Airport identification uses the local dataset instead.
+
+## Setup
+
+Clone the repository and enter the project directory:
+
+```powershell
+git clone https://github.com/krunalp1908/Multi-Agent-System-using-LangGraph-MCP-Supervisor-Guardrails-HITL.git
+cd Multi-Agent-System-using-LangGraph-MCP-Supervisor-Guardrails-HITL
+```
+
+Create a virtual environment and install dependencies:
 
 ```powershell
 python -m venv .venv
-.venv\Scripts\Activate.ps1    # PowerShell
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-2. Install dependencies
+Create a local `.env` file in the project root and provide the keys below. Use real credentials locally; never commit this file.
+
+```dotenv
+DATABASE_URL=postgresql://user:password@host:5432/database?sslmode=require
+GROQ_API_KEY=your_groq_api_key
+TAVILY_API_KEY=your_tavily_api_key
+OPENWEATHER_API_KEY=your_openweather_api_key
+```
+
+`DATABASE_URL` and `GROQ_API_KEY` are required when the backend starts. Tavily and OpenWeather are used by their respective agents. `.env` is excluded by `.gitignore`.
+
+Start the app from the project root:
 
 ```powershell
-pip install -r requirements.txt
+.\.venv\Scripts\python.exe app.py
 ```
 
-3. Run the FastAPI app (development)
+Open <http://127.0.0.1:8000/>. The API documentation is available at <http://127.0.0.1:8000/docs>.
 
-```powershell
-# option A (run module)
-python app.py
+## API
 
-# option B (uvicorn)
-uvicorn app:app --reload --host 127.0.0.1 --port 8000
+### `POST /api/travel`
+
+Starts a travel-planning run and returns the draft when the graph pauses for approval.
+
+```json
+{
+  "message": "Plan a 7-day trip to Japan from Bangladesh under 200,000 BDT.",
+  "thread_id": null
+}
 ```
 
-4. Open the web UI
+The response includes `thread_id`, `answer`, `itinerary`, `selected_agents`, `supervisor_reasoning`, and `requires_approval`. Keep the returned thread ID to resume the same workflow.
 
-Visit http://127.0.0.1:8000 in your browser to use the TripMate frontend.
+### `POST /api/travel/approve`
 
-Running the MCP server (example)
-- The repository includes `custom_weather_mcp_server.py` as an example MCP server. Run it in a separate terminal if you want to experiment with custom adapters used by the demo.
+Resumes a paused workflow. Set `approved` to `true` to accept the draft or `false` to request a revision; revision requests require feedback.
 
-```powershell
-# start example MCP server (if needed)
-python custom_weather_mcp_server.py
+```json
+{
+  "thread_id": "thread-id-from-the-draft-response",
+  "approved": false,
+  "feedback": "Reduce accommodation costs and add more free activities."
+}
 ```
 
-API Endpoints
-- `POST /api/travel` — create or resume a travel planning thread. JSON: `{ "message": "<user prompt>", "thread_id": "optional-thread-id" }`
-- `POST /api/travel/approve` — approve or request revisions for a draft. JSON: `{ "thread_id": "<id>", "approved": true|false, "feedback": "optional" }`
-- `GET /health` — basic health check and features list
+### `GET /health`
 
-Configuration & environment
-- Secrets and API keys are not included in the repo. Use environment variables or a `.env` file for any required keys consumed by `langgraph`, `langchain`, or other adapters.
+Returns the service status and advertised workflow features.
 
-Development notes
-- The project keeps synchronous convenience wrappers in `backend.py` while running an async FastAPI server — `nest_asyncio` is applied in `app.py` to allow the sync helpers to call async MCP helpers.
-- Tests are not included; to experiment, interact with the web UI or call the API endpoints directly.
+## Project layout
 
-Contributing
-- Contributions are welcome. Please open issues or pull requests for bug fixes, documentation improvements, or new adapter examples.
+| Path | Purpose |
+| --- | --- |
+| `app.py` | FastAPI application and HTTP endpoints |
+| `backend.py` | LangGraph state, supervisor, agents, approval interrupt, and PostgreSQL checkpointer |
+| `mcp_client.py` | MCP clients for Tavily, AviationStack, and the local weather server; destination extraction |
+| `custom_weather_mcp_server.py` | OpenWeather-backed MCP tools for current conditions and forecast |
+| `templates/` | HTML page for the web interface |
+| `static/` | Browser JavaScript and CSS |
 
-License
-- This repository follows the license in the `LICENSE` file.
+## Notes and limitations
 
-Acknowledgements
-- Built as a demonstration of LangGraph + MCP patterns with supervisor and guardrail concepts.
+- Flight suggestions are planning guidance, not booking results. Airport records are local; airline routes, schedules, and ticket prices are not verified live.
+- Hotel and weather data depend on valid provider keys, network access, and each provider's service availability.
+- PostgreSQL checkpointer setup runs during backend initialization, so the database must be reachable when starting the app.
+- The repository does not currently include an automated test suite.
 
-Contact
-- For questions or suggestions, open an issue or contact the repository owner.
+## Security
+
+- Keep API keys and database credentials in `.env` or a secrets manager, not in source code.
+- If a credential was ever committed or sent to a remote, rotate it even after removing it from the commit.
+- Limit database credentials to the permissions required by the application.
